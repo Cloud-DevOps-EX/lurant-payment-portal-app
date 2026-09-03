@@ -27,7 +27,8 @@ variable "instance_class" {
 
 variable "allocated_storage" {
   type    = number
-  default = 20
+  default = 21
+
 }
 
 variable "max_allocated_storage" {
