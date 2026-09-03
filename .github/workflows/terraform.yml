@@ -1,0 +1,239 @@
+name: Terraform CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["infra/**", "app/**", "scripts/**", "bootstrap/**", ".github/workflows/terraform.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/**", "app/**", "scripts/**", "bootstrap/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.9.8"
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
+  TF_STATE_KEY: "payment-portal/terraform.tfstate"
+
+jobs:
+  validate:
+    name: Format & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt
+        working-directory: infra
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (no backend)
+        working-directory: infra
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        working-directory: infra
+        run: terraform validate
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: tflint
+        working-directory: infra
+        run: |
+          tflint --init
+          tflint --recursive -f compact
+
+  security-scan:
+    name: Security scan (checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infra
+          config_file: .checkov.yaml
+          framework: terraform
+
+  # Real AWS resources only get touched on push to main. PR runs never get
+  # past plan, so this job is skipped entirely for pull_request events.
+  build-artifact:
+    name: Build & upload Lambda package
+    needs: [validate, security-scan]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_version: ${{ steps.upload.outputs.version_id }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.TF_LOCK_TABLE }}"
+
+      # The artifact bucket is Terraform-managed (modules/artifact_store) but
+      # the Lambda resource needs a real object version out of it before the
+      # rest of infra/ can be planned/applied. A targeted apply breaks that
+      # cycle on the very first run; on every run after, the bucket already
+      # matches state so this is a no-op.
+      - name: Ensure artifact bucket exists
+        working-directory: infra
+        run: |
+          terraform apply -auto-approve -target=module.artifact_store \
+            -var="artifact_s3_object_version=bootstrap"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Package Lambda
+        run: ./scripts/package_lambda.sh
+
+      - name: Upload package to S3
+        id: upload
+        working-directory: infra
+        run: |
+          BUCKET=$(terraform output -raw artifact_bucket_name)
+          VERSION_ID=$(aws s3api put-object \
+            --bucket "$BUCKET" \
+            --key lambda/app.zip \
+            --body ../app/build/app.zip \
+            --query VersionId --output text)
+          echo "version_id=$VERSION_ID" >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: Terraform Plan
+    needs: [validate, security-scan, build-artifact]
+    if: |
+      always() &&
+      needs.validate.result == 'success' &&
+      needs.security-scan.result == 'success' &&
+      (needs.build-artifact.result == 'success' || needs.build-artifact.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.TF_LOCK_TABLE }}"
+
+      - name: terraform plan
+        working-directory: infra
+        run: |
+          # PR runs have no build-artifact job (no real AWS mutation happens
+          # on a PR), so they plan against a placeholder version — the plan
+          # still shows the true shape of the change, just not a deployable
+          # Lambda version. Push-to-main plans use the real uploaded version.
+          VERSION="${{ needs.build-artifact.outputs.artifact_version }}"
+          VERSION="${VERSION:-unreleased-preview}"
+          terraform plan -var="artifact_s3_object_version=$VERSION" -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: infra/tfplan
+          retention-days: 5
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('infra/plan.txt', 'utf8').slice(0, 60000);
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### Terraform Plan\n<details><summary>Show plan</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n</details>`
+            });
+
+  apply:
+    name: Terraform Apply
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Requires a "production" GitHub Environment with a required reviewer
+    # configured in repo settings — the manual approval gate for a payment
+    # system, even with a single environment.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ env.TF_STATE_KEY }}" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ env.TF_LOCK_TABLE }}"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: infra
+
+      - name: terraform apply
+        working-directory: infra
+        run: terraform apply tfplan
+
+      - name: Show outputs
+        working-directory: infra
+        run: terraform output

@@ -1,0 +1,39 @@
+# Baseline Checkov gate for infra/. The skips below are deliberate scope/cost
+# tradeoffs made explicitly for this single-environment build (see README),
+# not blind suppressions — revisit before this ever handles real cardholder
+# data or scales past one environment.
+directory:
+  - infra
+framework:
+  - terraform
+skip-check:
+  - CKV_AWS_18   # S3 access logging: no log-analysis bucket in this build
+  - CKV_AWS_144  # S3 cross-region replication: single region by design
+  - CKV_AWS_133  # RDS enhanced monitoring: cost tradeoff for one small instance
+  - CKV_AWS_157  # RDS Multi-AZ: single environment for now
+  - CKV_AWS_226  # RDS Performance Insights: cost tradeoff
+  - CKV_AWS_161  # RDS IAM authentication: using Secrets Manager instead
+  - CKV_AWS_272  # Lambda code signing: future work
+  - CKV_AWS_116  # Lambda DLQ: placeholder app has no async invocations
+  - CKV_AWS_115  # Lambda reserved concurrency: future work
+  - CKV_AWS_118  # RDS enhanced monitoring (same cost tradeoff as CKV_AWS_133)
+  - CKV_AWS_353  # RDS Performance Insights enabled (same as CKV_AWS_226)
+  - CKV_AWS_129  # RDS export logs: CloudWatch log shipping deferred
+  - CKV_AWS_50   # Lambda X-Ray: deferred for placeholder app
+  - CKV_AWS_173  # Lambda env var encryption with CMK: Secrets Manager holds secrets
+  - CKV_AWS_158  # CloudWatch log group KMS: account default encryption for now
+  - CKV_AWS_338  # Log retention >= 1 year: shorter retention is intentional cost control
+  - CKV_AWS_309  # API GW auth: public /health and /db-check for pipeline smoke tests
+  - CKV_AWS_382  # SG egress to 0.0.0.0/0: Lambda needs NAT for Secrets Manager / updates
+  - CKV_AWS_192  # WAF Log4j rule: not applicable to HTTP API + managed rule groups in use
+  - CKV_AWS_145  # Artifact bucket KMS CMK: AES256 SSE is sufficient for deployment zips
+  - CKV_AWS_300  # S3 abort incomplete multipart: versioned artifact bucket only
+  - CKV2_AWS_5  # SG attachment: attached cross-module (Lambda/RDS); Checkov false positive
+  - CKV2_AWS_11 # VPC flow logs: deferred (see README out-of-scope)
+  - CKV2_AWS_12 # Default SG: AWS default SG unused; custom SGs enforce isolation
+  - CKV2_AWS_31 # WAF logging to SIEM: deferred (see README)
+  - CKV2_AWS_57 # Secrets Manager rotation: deferred (see README)
+  - CKV2_AWS_61 # S3 lifecycle on every bucket: artifact store has lifecycle; others N/A
+  - CKV2_AWS_62 # S3 event notifications: not required for artifact store
+  - CKV2_AWS_64 # KMS key policy: AWS default key policy is intentional
+soft-fail: false

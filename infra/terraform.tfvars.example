@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars for local runs (gitignored). CI supplies these as
+# -var flags from GitHub repo variables instead of a committed tfvars file.
+
+aws_region   = "us-east-1"
+project_name = "payment-portal"
+environment  = "prod"
+
+db_instance_class      = "db.t4g.micro"
+db_deletion_protection = true
+db_skip_final_snapshot = false
+
+# Set by CI right before `terraform apply`, after uploading the freshly built
+# Lambda zip — leave unset locally unless you're testing a specific artifact.
+# artifact_s3_object_version = "abc123..."
