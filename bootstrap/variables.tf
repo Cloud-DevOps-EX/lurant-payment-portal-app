@@ -23,7 +23,7 @@ variable "github_repo" {
 variable "create_oidc_provider" {
   description = "Whether to create the GitHub Actions OIDC provider. Set to false if one already exists for token.actions.githubusercontent.com in this AWS account (only one is allowed per account)."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "existing_oidc_provider_arn" {
