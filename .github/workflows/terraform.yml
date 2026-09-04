@@ -24,7 +24,7 @@ env:
   AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
   TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
   TF_LOCK_TABLE: ${{ vars.TF_LOCK_TABLE }}
-  TF_STATE_KEY: "payment-portal/terraform.tfstate"
+  TF_STATE_KEY: "lurant-payment-portal-app/terraform.tfstate"
 
 jobs:
   validate:
