@@ -12,7 +12,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 mkdir -p "$(dirname "$OUTPUT_ZIP")"
 
-pip install \
+python -m pip install \
   --requirement "$APP_DIR/src/requirements.txt" \
   --target "$BUILD_DIR" \
   --no-cache-dir \
