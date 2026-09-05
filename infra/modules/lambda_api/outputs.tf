@@ -1,6 +1,6 @@
 output "api_endpoint" {
-  description = "Invoke URL for the HTTP API's $default stage."
-  value       = aws_apigatewayv2_stage.default.invoke_url
+  description = "Hostname for the HTTP API's $default stage."
+  value       = trimsuffix(replace(aws_apigatewayv2_stage.default.invoke_url, "https://", ""), "/")
 }
 
 output "function_name" {

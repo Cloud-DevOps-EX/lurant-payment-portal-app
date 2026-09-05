@@ -119,8 +119,8 @@ terraform output api_endpoint
 ```
 
 ```bash
-curl https://<api_endpoint>/health     # {"status": "ok"}
-curl https://<api_endpoint>/db-check   # {"status": "ok", "db": "reachable"}
+curl "https://$(terraform output -raw api_endpoint)/health"     # {"status": "ok"}
+curl "https://$(terraform output -raw api_endpoint)/db-check"   # {"status": "ok", "db": "reachable"}
 ```
 
 ## Security baseline included

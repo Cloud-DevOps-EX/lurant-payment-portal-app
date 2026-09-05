@@ -49,7 +49,7 @@ variable "master_username" {
 
 variable "backup_retention_days" {
   type    = number
-  default = 7
+  default = 6
 }
 
 variable "deletion_protection" {

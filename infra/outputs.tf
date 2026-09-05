@@ -1,7 +1,3 @@
-output "api_endpoint" {
-  description = "Invoke URL for the payment portal API (test /health and /db-check here)."
-  value       = module.lambda_api.api_endpoint
-}
 
 output "lambda_function_name" {
   value = module.lambda_api.function_name
@@ -22,4 +18,8 @@ output "db_secret_arn" {
 
 output "vpc_id" {
   value = module.network.vpc_id
+}
+
+output "api_endpoint" {
+  value = module.lambda_api.api_endpoint
 }
